@@ -24,3 +24,52 @@ model User {
 
   @@map("users")
 }
+
+model Conversation {
+  id        String               @id @default(cuid())
+  createdAt DateTime             @default(now()) @map("created_at")
+  updatedAt DateTime             @updatedAt @map("updated_at")
+  messages  ConversationMessage[]
+
+  @@map("conversations")
+}
+
+model ConversationMessage {
+  id             String       @id @default(cuid())
+  conversationId String       @map("conversation_id")
+  sequence       Int
+  question       String
+  answer         String?
+  questionVector Unsupported("vector(1536)") @map("question_vector")
+  createdAt      DateTime     @default(now()) @map("created_at")
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, sequence])
+  @@index([conversationId])
+  @@map("conversation_messages")
+}
+
+model Document {
+  id           String          @id @default(cuid())
+  originalName String          @map("original_name")
+  mimeType     String          @map("mime_type")
+  storagePath  String          @map("storage_path")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  chunks       DocumentChunk[]
+
+  @@map("documents")
+}
+
+model DocumentChunk {
+  id         String   @id @default(cuid())
+  documentId String   @map("document_id")
+  chunkIndex Int      @map("chunk_index")
+  content    String
+  embedding  Unsupported("vector(1536)")
+  createdAt  DateTime @default(now()) @map("created_at")
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+  @@map("document_chunks")
+}
