@@ -1,42 +1,79 @@
 'use strict';
 
 const crypto = require('crypto');
-const { embedQuestion } = require('../lib/embeddings');
+const { embedQuestion, generateAnswer } = require('../lib/embeddings');
 const prisma = require('../lib/prisma');
 
 const MAX_QUESTION_LENGTH = 2000;
 const MAX_ANSWER_LENGTH = 10000;
 
-async function askQuestion(req, res) {
+function getQuestion(req) {
   const question = typeof req.body?.question === 'string'
     ? req.body.question.trim()
     : '';
 
   if (!question) {
-    return res.status(400).json({ error: 'Question is required.' });
+    return { error: 'Question is required.' };
   }
 
   if (question.length > MAX_QUESTION_LENGTH) {
-    return res.status(400).json({ error: 'Question exceeds maximum allowed length.' });
+    return { error: 'Question exceeds maximum allowed length.' };
   }
+
+  return { question };
+}
+
+async function retrieveChunks(question) {
+  const embedding = await embedQuestion(question);
+  const vector = `[${embedding.join(',')}]`;
+
+  const chunks = await prisma.$queryRaw`
+    SELECT content, 1 - (embedding <=> ${vector}::vector) AS similarity
+    FROM document_chunks
+    ORDER BY embedding <=> ${vector}::vector
+    LIMIT 3
+  `;
+
+  return { chunks, vector };
+}
+
+async function retrieveQuestionChunks(req, res) {
+  const { question, error } = getQuestion(req);
+  if (error) {
+    return res.status(400).json({ error });
+  }
+
+  try {
+    const { chunks } = await retrieveChunks(question);
+    return res.status(200).json({
+      question,
+      chunks: chunks.map((chunk, index) => ({
+        rank: index + 1,
+        content: chunk.content,
+        similarity: Number(chunk.similarity),
+      })),
+    });
+  } catch (err) {
+    console.error('[question/retrieve] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to retrieve document chunks.' });
+  }
+}
+
+async function askQuestion(req, res) {
+  const questionResult = getQuestion(req);
+  if (questionResult.error) {
+    return res.status(400).json({ error: questionResult.error });
+  }
+  const { question } = questionResult;
 
   const conversationId = typeof req.body?.conversationId === 'string'
     ? req.body.conversationId.trim()
     : '';
-  const suppliedAnswer = req.body?.answer ?? req.body?.reply ?? null;
-
-  if (suppliedAnswer !== null && typeof suppliedAnswer !== 'string') {
-    return res.status(400).json({ error: 'Answer must be a string.' });
-  }
-
-  const answer = typeof suppliedAnswer === 'string' ? suppliedAnswer.trim() : null;
-  if (answer && answer.length > MAX_ANSWER_LENGTH) {
-    return res.status(400).json({ error: 'Answer exceeds maximum allowed length.' });
-  }
-
   try {
-    const embedding = await embedQuestion(question);
-    const vector = `[${embedding.join(',')}]`;
+    const { chunks, vector } = await retrieveChunks(question);
+    const context = chunks.map((chunk) => chunk.content).join('\n\n');
+    const prompt = `Answer this question based only on the following context: ${context}. Question:${question}`;
+    const answer = (await generateAnswer(prompt)).slice(0, MAX_ANSWER_LENGTH);
 
     const savedMessage = await prisma.$transaction(async (transaction) => {
       let conversation;
@@ -97,4 +134,5 @@ async function askQuestion(req, res) {
 
 module.exports = {
   askQuestion,
+  retrieveQuestionChunks,
 };
