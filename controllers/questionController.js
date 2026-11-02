@@ -214,8 +214,70 @@ async function streamQuestion(req, res) {
   }
 }
 
+async function listConversations(req, res) {
+  try {
+    const conversations = await prisma.conversation.findMany({
+      select: {
+        id: true,
+        createdAt: true,
+        updatedAt: true,
+        messages: {
+          select: { question: true },
+          orderBy: { sequence: 'asc' },
+          take: 1,
+        },
+        _count: { select: { messages: true } },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    return res.status(200).json({ conversations });
+  } catch (err) {
+    console.error('[question/conversations] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to list conversations.' });
+  }
+}
+
+async function getConversationMessages(req, res) {
+  const { id } = req.params;
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ error: 'Conversation ID is required.' });
+  }
+
+  try {
+    const conversation = await prisma.conversation.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        createdAt: true,
+        messages: {
+          select: {
+            id: true,
+            sequence: true,
+            question: true,
+            answer: true,
+            createdAt: true,
+          },
+          orderBy: { sequence: 'asc' },
+        },
+      },
+    });
+
+    if (!conversation) {
+      return res.status(404).json({ error: 'Conversation not found.' });
+    }
+
+    return res.status(200).json({ conversation });
+  } catch (err) {
+    console.error('[question/conversation] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch conversation messages.' });
+  }
+}
+
 module.exports = {
   askQuestion,
   retrieveQuestionChunks,
   streamQuestion,
+  listConversations,
+  getConversationMessages,
 };

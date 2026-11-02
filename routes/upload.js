@@ -19,5 +19,7 @@ const uploadDocument = upload.fields([
 
 router.post('/document', uploadDocument, documentController.uploadDocument);
 router.post('/pdf', uploadDocument, documentController.uploadDocument);
+router.get('/documents', documentController.listDocuments);
+router.delete('/document/:id', documentController.deleteDocument);
 
 module.exports = router;

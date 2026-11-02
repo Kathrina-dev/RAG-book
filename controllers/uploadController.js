@@ -110,6 +110,65 @@ async function uploadDocument(req, res) {
   }
 }
 
+async function listDocuments(req, res) {
+  try {
+    const documents = await prisma.document.findMany({
+      select: {
+        id: true,
+        originalName: true,
+        mimeType: true,
+        storagePath: true,
+        createdAt: true,
+        _count: { select: { chunks: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return res.status(200).json({ documents });
+  } catch (err) {
+    console.error('[storage/list] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to list documents.' });
+  }
+}
+
+async function deleteDocument(req, res) {
+  const { id } = req.params;
+  if (!id || typeof id !== 'string') {
+    return res.status(400).json({ error: 'Document ID is required.' });
+  }
+
+  try {
+    const document = await prisma.document.findUnique({
+      where: { id },
+      select: { id: true, storagePath: true },
+    });
+
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found.' });
+    }
+
+    // Delete from Supabase storage
+    const { error: storageError } = await supabase.storage
+      .from('pdfs')
+      .remove([document.storagePath]);
+
+    if (storageError) {
+      console.error('[storage/delete] Supabase removal failed:', storageError.message);
+      // Continue to delete from DB even if storage fails
+    }
+
+    // Delete from DB (cascades to document_chunks)
+    await prisma.document.delete({ where: { id } });
+
+    return res.status(200).json({ message: 'Document deleted successfully.' });
+  } catch (err) {
+    console.error('[storage/delete] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to delete document.' });
+  }
+}
+
 module.exports = {
   uploadDocument,
+  listDocuments,
+  deleteDocument,
 };
