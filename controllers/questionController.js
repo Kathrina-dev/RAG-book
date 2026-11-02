@@ -5,7 +5,6 @@ const { embedQuestion, generateAnswer } = require('../lib/embeddings');
 const prisma = require('../lib/prisma');
 
 const MAX_QUESTION_LENGTH = 2000;
-const MAX_ANSWER_LENGTH = 10000;
 
 function getQuestion(req) {
   const question = typeof req.body?.question === 'string'
@@ -23,10 +22,12 @@ function getQuestion(req) {
   return { question };
 }
 
-async function retrieveChunks(question) {
+async function retrieveChunks(question, onProgress = () => {}) {
   const embedding = await embedQuestion(question);
+  onProgress('embedding_completed');
   const vector = `[${embedding.join(',')}]`;
 
+  onProgress('similarity_started');
   const chunks = await prisma.$queryRaw`
     SELECT content, 1 - (embedding <=> ${vector}::vector) AS similarity
     FROM document_chunks
@@ -34,7 +35,80 @@ async function retrieveChunks(question) {
     LIMIT 3
   `;
 
+  onProgress('chunks_retrieved', {
+    count: chunks.length,
+    similarities: chunks.map((chunk) => Number(chunk.similarity)),
+  });
+
   return { chunks, vector };
+}
+
+async function saveMessage(question, answer, vector, conversationId) {
+  return prisma.$transaction(async (transaction) => {
+    let conversation;
+
+    if (conversationId) {
+      conversation = await transaction.conversation.findUnique({
+        where: { id: conversationId },
+        select: { id: true },
+      });
+
+      if (!conversation) {
+        const error = new Error('Conversation not found.');
+        error.statusCode = 404;
+        throw error;
+      }
+    } else {
+      conversation = await transaction.conversation.create({
+        data: {},
+        select: { id: true },
+      });
+    }
+
+    const [{ nextSequence }] = await transaction.$queryRaw`
+      SELECT COALESCE(MAX(sequence), -1) + 1 AS "nextSequence"
+      FROM conversation_messages
+      WHERE conversation_id = ${conversation.id}
+    `;
+
+    const sequence = Number(nextSequence);
+    const messageId = crypto.randomUUID();
+
+    await transaction.$executeRaw`
+      INSERT INTO conversation_messages
+        (id, conversation_id, sequence, question, answer, question_vector)
+      VALUES
+        (${messageId}, ${conversation.id}, ${sequence}, ${question}, ${answer}, ${vector}::vector)
+    `;
+
+    return { id: messageId, conversationId: conversation.id, sequence };
+  });
+}
+
+async function answerQuestion(question, conversationId, onProgress = () => {}) {
+  onProgress('embedding_started');
+  const { chunks, vector } = await retrieveChunks(question, onProgress);
+
+  const context = chunks.map((chunk) => chunk.content).join('\n\n');
+  const prompt = `Answer this question based only on the following context: ${context}. Question:${question}`;
+
+  onProgress('generation_started');
+  const answer = await generateAnswer(prompt);
+  onProgress('generation_completed');
+
+  const savedMessage = await saveMessage(question, answer, vector, conversationId);
+  onProgress('answer_saved', {
+    conversationId: savedMessage.conversationId,
+    messageId: savedMessage.id,
+    sequence: savedMessage.sequence,
+  });
+
+  return { savedMessage, answer };
+}
+
+function sendEvent(res, type, data = {}) {
+  if (res.writableEnded) return;
+  res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
 async function retrieveQuestionChunks(req, res) {
@@ -70,50 +144,7 @@ async function askQuestion(req, res) {
     ? req.body.conversationId.trim()
     : '';
   try {
-    const { chunks, vector } = await retrieveChunks(question);
-    const context = chunks.map((chunk) => chunk.content).join('\n\n');
-    const prompt = `Answer this question based only on the following context: ${context}. Question:${question}`;
-    const answer = (await generateAnswer(prompt)).slice(0, MAX_ANSWER_LENGTH);
-
-    const savedMessage = await prisma.$transaction(async (transaction) => {
-      let conversation;
-
-      if (conversationId) {
-        conversation = await transaction.conversation.findUnique({
-          where: { id: conversationId },
-          select: { id: true },
-        });
-
-        if (!conversation) {
-          const error = new Error('Conversation not found.');
-          error.statusCode = 404;
-          throw error;
-        }
-      } else {
-        conversation = await transaction.conversation.create({
-          data: {},
-          select: { id: true },
-        });
-      }
-
-      const [{ nextSequence }] = await transaction.$queryRaw`
-        SELECT COALESCE(MAX(sequence), -1) + 1 AS "nextSequence"
-        FROM conversation_messages
-        WHERE conversation_id = ${conversation.id}
-      `;
-
-      const sequence = Number(nextSequence);
-      const messageId = crypto.randomUUID();
-
-      await transaction.$executeRaw`
-        INSERT INTO conversation_messages
-          (id, conversation_id, sequence, question, answer, question_vector)
-        VALUES
-          (${messageId}, ${conversation.id}, ${sequence}, ${question}, ${answer}, ${vector}::vector)
-      `;
-
-      return { id: messageId, conversationId: conversation.id, sequence };
-    });
+    const { savedMessage, answer } = await answerQuestion(question, conversationId);
 
     return res.status(200).json({
       conversationId: savedMessage.conversationId,
@@ -132,7 +163,59 @@ async function askQuestion(req, res) {
   }
 }
 
+async function streamQuestion(req, res) {
+  const questionResult = getQuestion(req);
+  if (questionResult.error) {
+    return res.status(400).json({ error: questionResult.error });
+  }
+  const { question } = questionResult;
+  const conversationId = typeof req.body?.conversationId === 'string'
+    ? req.body.conversationId.trim()
+    : '';
+
+  res.status(200).set({
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.flushHeaders();
+  sendEvent(res, 'started');
+
+  let stage = 'starting';
+  try {
+    const { savedMessage, answer } = await answerQuestion(
+      question,
+      conversationId,
+      (type, data) => {
+        stage = type;
+        sendEvent(res, type, data);
+      }
+    );
+
+    sendEvent(res, 'done', {
+      question,
+      answer,
+      conversationId: savedMessage.conversationId,
+      messageId: savedMessage.id,
+      sequence: savedMessage.sequence,
+    });
+  } catch (err) {
+    console.error('[question/stream] Unexpected error:', err.message);
+    sendEvent(res, 'error', {
+      status: err.statusCode || 500,
+      stage,
+      message: process.env.NODE_ENV === 'production' && !err.statusCode
+        ? 'Failed to process question.'
+        : err.message,
+    });
+  } finally {
+    res.end();
+  }
+}
+
 module.exports = {
   askQuestion,
   retrieveQuestionChunks,
+  streamQuestion,
 };
