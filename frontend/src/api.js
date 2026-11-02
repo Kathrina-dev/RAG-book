@@ -6,7 +6,7 @@
  * TODO(security): Consider migrating to HttpOnly cookie-based auth if the backend is updated.
  */
 
-const BASE = '/api';
+const BASE = 'https://ragbook-backend.kathrinaelangbam.xyz/api' || '/api';
 
 // In-memory token store — NOT in localStorage (XSS protection)
 let _token = null;

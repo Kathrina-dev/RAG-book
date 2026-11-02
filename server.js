@@ -19,6 +19,7 @@ startDatabaseKeepAlive(prisma);
 const allowedOrigins = [
   'http://localhost:5174',
   'http://127.0.0.1:5174',
+  'https://ragbook.kathrinaelangbam.xyz',
   process.env.FRONTEND_ORIGIN,
 ].filter(Boolean);
 
