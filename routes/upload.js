@@ -3,8 +3,10 @@
 const express = require('express');
 const multer = require('multer');
 const documentController = require('../controllers/uploadController');
+const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
+router.use(requireAuth);
 
 const upload = multer({ 
   storage: multer.memoryStorage(),

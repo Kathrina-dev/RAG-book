@@ -12,7 +12,7 @@ import { CheckCircleIcon } from './icons';
 const PIPELINE_STAGES = [
   {
     event: 'started',
-    message: 'Warming up the research desk…',
+    message: 'Warming up the study desk…',
     done: 'Ready',
   },
   {

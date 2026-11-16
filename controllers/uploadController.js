@@ -81,6 +81,7 @@ async function uploadDocument(req, res) {
     const document = await prisma.$transaction(async (transaction) => {
       const createdDocument = await transaction.document.create({
         data: {
+          userId: req.user.id,
           originalName: file.originalname,
           mimeType: file.mimetype,
           storagePath: storageData.path,
@@ -113,6 +114,7 @@ async function uploadDocument(req, res) {
 async function listDocuments(req, res) {
   try {
     const documents = await prisma.document.findMany({
+      where: { userId: req.user.id },
       select: {
         id: true,
         originalName: true,
@@ -138,8 +140,8 @@ async function deleteDocument(req, res) {
   }
 
   try {
-    const document = await prisma.document.findUnique({
-      where: { id },
+    const document = await prisma.document.findFirst({
+      where: { id, userId: req.user.id },
       select: { id: true, storagePath: true },
     });
 

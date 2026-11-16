@@ -2,42 +2,12 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
 const prisma = require('../lib/prisma');
+const { getJwtSecret } = require('../lib/auth');
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_PASSWORD_LENGTH = 128;
 const SALT_ROUNDS = 12;
-
-// ---------------------------------------------------------------------------
-// JWT Secret Resolution
-// ---------------------------------------------------------------------------
-let cachedSecret = null;
-
-function getJwtSecret() {
-  if (process.env.JWT_SECRET) {
-    return process.env.JWT_SECRET;
-  }
-  if (cachedSecret) {
-    return cachedSecret;
-  }
-  const secretFile = path.join(__dirname, '..', 'jwt_secret.txt');
-  if (fs.existsSync(secretFile)) {
-    cachedSecret = fs.readFileSync(secretFile, 'utf-8').trim();
-    return cachedSecret;
-  }
-
-  console.warn(
-    '[SECURITY WARNING] JWT_SECRET not set. ' +
-    'Generating an ephemeral per-process secret. ' +
-    'This instance is isolated — tokens will be invalidated on restart. ' +
-    'Set JWT_SECRET in your environment for production deployments.'
-  );
-  cachedSecret = crypto.randomBytes(32).toString('hex');
-  return cachedSecret;
-}
 
 // ---------------------------------------------------------------------------
 // Internal Core Operations

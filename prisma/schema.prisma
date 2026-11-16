@@ -21,16 +21,21 @@ model User {
   passwordHash String   @map("password_hash")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+  conversations Conversation[]
+  documents    Document[]
 
   @@map("users")
 }
 
 model Conversation {
   id        String               @id @default(cuid())
+  userId    String?              @map("user_id")
   createdAt DateTime             @default(now()) @map("created_at")
   updatedAt DateTime             @updatedAt @map("updated_at")
   messages  ConversationMessage[]
+  user      User?                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@map("conversations")
 }
 
@@ -51,12 +56,15 @@ model ConversationMessage {
 
 model Document {
   id           String          @id @default(cuid())
+  userId       String?         @map("user_id")
   originalName String          @map("original_name")
   mimeType     String          @map("mime_type")
   storagePath  String          @map("storage_path")
   createdAt    DateTime        @default(now()) @map("created_at")
   chunks       DocumentChunk[]
+  user         User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId])
   @@map("documents")
 }
 

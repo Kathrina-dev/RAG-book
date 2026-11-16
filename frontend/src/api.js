@@ -8,8 +8,15 @@
 
 const BASE = 'https://ragbook-backend.kathrinaelangbam.xyz/api' || '/api';
 
-// In-memory token store — NOT in localStorage (XSS protection)
-let _token = null;
+// Keep the token in memory, restoring it only from the current browser session.
+let _token = (() => {
+  try {
+    const storedUser = sessionStorage.getItem('rb_user');
+    return storedUser ? JSON.parse(storedUser)?.token || null : null;
+  } catch {
+    return null;
+  }
+})();
 
 export function setToken(token) {
   _token = token;

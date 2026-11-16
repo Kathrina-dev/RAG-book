@@ -22,16 +22,18 @@ function getQuestion(req) {
   return { question };
 }
 
-async function retrieveChunks(question, onProgress = () => {}) {
+async function retrieveChunks(question, userId, onProgress = () => {}) {
   const embedding = await embedQuestion(question);
   onProgress('embedding_completed');
   const vector = `[${embedding.join(',')}]`;
 
   onProgress('similarity_started');
   const chunks = await prisma.$queryRaw`
-    SELECT content, 1 - (embedding <=> ${vector}::vector) AS similarity
-    FROM document_chunks
-    ORDER BY embedding <=> ${vector}::vector
+    SELECT dc.content, 1 - (dc.embedding <=> ${vector}::vector) AS similarity
+    FROM document_chunks dc
+    INNER JOIN documents d ON d.id = dc.document_id
+    WHERE d.user_id = ${userId}
+    ORDER BY dc.embedding <=> ${vector}::vector
     LIMIT 3
   `;
 
@@ -43,13 +45,13 @@ async function retrieveChunks(question, onProgress = () => {}) {
   return { chunks, vector };
 }
 
-async function saveMessage(question, answer, vector, conversationId) {
+async function saveMessage(question, answer, vector, conversationId, userId) {
   return prisma.$transaction(async (transaction) => {
     let conversation;
 
     if (conversationId) {
-      conversation = await transaction.conversation.findUnique({
-        where: { id: conversationId },
+      conversation = await transaction.conversation.findFirst({
+        where: { id: conversationId, userId },
         select: { id: true },
       });
 
@@ -60,7 +62,7 @@ async function saveMessage(question, answer, vector, conversationId) {
       }
     } else {
       conversation = await transaction.conversation.create({
-        data: {},
+        data: { userId },
         select: { id: true },
       });
     }
@@ -85,9 +87,9 @@ async function saveMessage(question, answer, vector, conversationId) {
   });
 }
 
-async function answerQuestion(question, conversationId, onProgress = () => {}) {
+async function answerQuestion(question, conversationId, userId, onProgress = () => {}) {
   onProgress('embedding_started');
-  const { chunks, vector } = await retrieveChunks(question, onProgress);
+  const { chunks, vector } = await retrieveChunks(question, userId, onProgress);
 
   const context = chunks.map((chunk) => chunk.content).join('\n\n');
   const prompt = `Answer this question based only on the following context: ${context}. Question:${question}`;
@@ -96,7 +98,7 @@ async function answerQuestion(question, conversationId, onProgress = () => {}) {
   const answer = await generateAnswer(prompt);
   onProgress('generation_completed');
 
-  const savedMessage = await saveMessage(question, answer, vector, conversationId);
+  const savedMessage = await saveMessage(question, answer, vector, conversationId, userId);
   onProgress('answer_saved', {
     conversationId: savedMessage.conversationId,
     messageId: savedMessage.id,
@@ -111,28 +113,6 @@ function sendEvent(res, type, data = {}) {
   res.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-async function retrieveQuestionChunks(req, res) {
-  const { question, error } = getQuestion(req);
-  if (error) {
-    return res.status(400).json({ error });
-  }
-
-  try {
-    const { chunks } = await retrieveChunks(question);
-    return res.status(200).json({
-      question,
-      chunks: chunks.map((chunk, index) => ({
-        rank: index + 1,
-        content: chunk.content,
-        similarity: Number(chunk.similarity),
-      })),
-    });
-  } catch (err) {
-    console.error('[question/retrieve] Unexpected error:', err.message);
-    return res.status(500).json({ error: 'Failed to retrieve document chunks.' });
-  }
-}
-
 async function askQuestion(req, res) {
   const questionResult = getQuestion(req);
   if (questionResult.error) {
@@ -144,7 +124,7 @@ async function askQuestion(req, res) {
     ? req.body.conversationId.trim()
     : '';
   try {
-    const { savedMessage, answer } = await answerQuestion(question, conversationId);
+    const { savedMessage, answer } = await answerQuestion(question, conversationId, req.user.id);
 
     return res.status(200).json({
       conversationId: savedMessage.conversationId,
@@ -187,6 +167,7 @@ async function streamQuestion(req, res) {
     const { savedMessage, answer } = await answerQuestion(
       question,
       conversationId,
+      req.user.id,
       (type, data) => {
         stage = type;
         sendEvent(res, type, data);
@@ -217,6 +198,7 @@ async function streamQuestion(req, res) {
 async function listConversations(req, res) {
   try {
     const conversations = await prisma.conversation.findMany({
+      where: { userId: req.user.id },
       select: {
         id: true,
         createdAt: true,
@@ -246,7 +228,7 @@ async function getConversationMessages(req, res) {
 
   try {
     const conversation = await prisma.conversation.findUnique({
-      where: { id },
+      where: { id, userId: req.user.id },
       select: {
         id: true,
         createdAt: true,
@@ -276,7 +258,6 @@ async function getConversationMessages(req, res) {
 
 module.exports = {
   askQuestion,
-  retrieveQuestionChunks,
   streamQuestion,
   listConversations,
   getConversationMessages,
