@@ -6,10 +6,10 @@ const dotenv = require('dotenv');
 const cors = require('cors');
 const prisma = require('./lib/prisma');
 const { startDatabaseKeepAlive } = require('./lib/databaseKeepAlive');
-const apiRoutes = require('./index');
 
 dotenv.config();
 
+const apiRoutes = require('./index');
 const app = express();
 const port = process.env.PORT || 5000;
 
