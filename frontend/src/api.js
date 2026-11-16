@@ -144,7 +144,7 @@ export async function apiGetConversation(id) {
 
 // ---- Streaming question ----
 // Returns a function to cancel the stream.
-export function apiStreamQuestion(question, conversationId, callbacks) {
+export function apiStreamQuestion(question, conversationId, model, callbacks) {
   const { onEvent, onError, onDone } = callbacks;
 
   const controller = new AbortController();
@@ -152,7 +152,11 @@ export function apiStreamQuestion(question, conversationId, callbacks) {
   fetch(`${BASE}/question/stream`, {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ question, conversationId: conversationId || undefined }),
+    body: JSON.stringify({
+      question,
+      conversationId: conversationId || undefined,
+      model: model || 'gemini',
+    }),
     signal: controller.signal,
   })
     .then(async (res) => {

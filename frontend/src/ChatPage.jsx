@@ -255,7 +255,7 @@ function ChatEmpty({ docCount, onSuggestedQuestion }) {
   );
 }
 
-function MessageComposer({ onSend, disabled }) {
+function MessageComposer({ onSend, disabled, model, onModelChange }) {
   const [value, setValue] = useState('');
   const textareaRef = useRef(null);
 
@@ -314,7 +314,14 @@ function MessageComposer({ onSend, disabled }) {
         </button>
       </div>
       <div className="composer-hint">
-        Enter to send · Shift+Enter for new line
+        <label htmlFor="chat-model">Model</label>
+        <select id="chat-model" value={model} onChange={(e) => onModelChange(e.target.value)} disabled={disabled}>
+          <option value="gemini">Gemini</option>
+          <option value="groq">Groq · GPT-OSS 120B</option>
+          <option value="cohere">Cohere · Command A</option>
+          <option value="openrouter">OpenRouter · Nemotron Ultra</option>
+        </select>
+        <span>Enter to send · Shift+Enter for new line</span>
       </div>
     </div>
   );
@@ -332,6 +339,7 @@ export default function ChatPage() {
   const [sourcesCollapsed, setSourcesCollapsed] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [streamingState, setStreamingState] = useState(null);
+  const [model, setModel] = useState('gemini');
 
   const messagesEndRef = useRef(null);
   const cancelStreamRef = useRef(null);
@@ -433,7 +441,7 @@ export default function ChatPage() {
     let finalAnswer = '';
     let finalConvId = null;
 
-    const cancel = apiStreamQuestion(question, convId, {
+    const cancel = apiStreamQuestion(question, convId, model, {
       onEvent: (eventType, data) => {
         setStreamingState((prev) => {
           if (!prev) return prev;
@@ -562,7 +570,12 @@ export default function ChatPage() {
         </div>
 
         {/* Composer */}
-        <MessageComposer onSend={handleSend} disabled={streaming} />
+        <MessageComposer
+          onSend={handleSend}
+          disabled={streaming}
+          model={model}
+          onModelChange={setModel}
+        />
       </div>
 
       {/* Right: Sources */}

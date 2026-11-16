@@ -22,6 +22,10 @@ function getQuestion(req) {
   return { question };
 }
 
+function getModel(req) {
+  return typeof req.body?.model === 'string' ? req.body.model.trim().toLowerCase() : 'gemini';
+}
+
 async function retrieveChunks(question, userId, onProgress = () => {}) {
   const embedding = await embedQuestion(question);
   onProgress('embedding_completed');
@@ -87,7 +91,7 @@ async function saveMessage(question, answer, vector, conversationId, userId) {
   });
 }
 
-async function answerQuestion(question, conversationId, userId, onProgress = () => {}) {
+async function answerQuestion(question, conversationId, userId, model, onProgress = () => {}) {
   onProgress('embedding_started');
   const { chunks, vector } = await retrieveChunks(question, userId, onProgress);
 
@@ -95,7 +99,7 @@ async function answerQuestion(question, conversationId, userId, onProgress = () 
   const prompt = `Answer this question based only on the following context: ${context}. Question:${question}`;
 
   onProgress('generation_started');
-  const answer = await generateAnswer(prompt);
+  const answer = await generateAnswer(prompt, model);
   onProgress('generation_completed');
 
   const savedMessage = await saveMessage(question, answer, vector, conversationId, userId);
@@ -124,7 +128,7 @@ async function askQuestion(req, res) {
     ? req.body.conversationId.trim()
     : '';
   try {
-    const { savedMessage, answer } = await answerQuestion(question, conversationId, req.user.id);
+    const { savedMessage, answer } = await answerQuestion(question, conversationId, req.user.id, getModel(req));
 
     return res.status(200).json({
       conversationId: savedMessage.conversationId,
@@ -168,6 +172,7 @@ async function streamQuestion(req, res) {
       question,
       conversationId,
       req.user.id,
+      getModel(req),
       (type, data) => {
         stage = type;
         sendEvent(res, type, data);
@@ -227,7 +232,7 @@ async function getConversationMessages(req, res) {
   }
 
   try {
-    const conversation = await prisma.conversation.findUnique({
+    const conversation = await prisma.conversation.findFirst({
       where: { id, userId: req.user.id },
       select: {
         id: true,

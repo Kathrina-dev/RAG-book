@@ -1368,6 +1368,16 @@ input::placeholder, textarea::placeholder {
   text-align: right;
 }
 
+.composer-hint select {
+  margin: 0 8px 0 4px;
+  padding: 2px 5px;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+
 /* === Sources Panel === */
 .sources-panel {
   width: 260px;
